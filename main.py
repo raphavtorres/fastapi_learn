@@ -16,7 +16,7 @@ async def startup_event():
   with open(datapath, 'r') as f:
     books = json.load(f)
     for book in books:
-      data.append(Book(**book).dict())
+      data.append(Book(**book).model_dump())
 
 
 # GET ALL BOOKS
@@ -44,7 +44,7 @@ def books(book_id: int, response: Response):
 # CREATE NEW BOOK
 @app.post('/api/v1/books/', response_model=Book, status_code=201)
 def add_book(book: Book):
-  book_dict = book.dict()
+  book_dict = book.model_dump()
   # create id to new data
   book_dict['id'] = max(data, key=lambda x: x['id']).get('id') + 1
   data.append(book_dict)
@@ -53,7 +53,7 @@ def add_book(book: Book):
 
 
 # MODIFY BOOK
-@app.get('/api/v1/books/{book_id}', response_model=Union[Book, str])
+@app.put('/api/v1/books/{book_id}', response_model=Union[Book, str])
 def books(book_id: int, updated_book: Book, response: Response):
   book = None
   for b in data:
@@ -65,7 +65,7 @@ def books(book_id: int, updated_book: Book, response: Response):
     response.status_code = 404
     return "Book not found"
   
-  for key, value in updated_book.dict().items():
+  for key, value in updated_book.model_dump().items():
     if key != 'id':  # to not change the id
       book[key] = value
   return book
