@@ -2,70 +2,103 @@ import json
 import pathlib
 from typing import List, Union
 
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Response, Depends, HTTPException, Query
+from sqlmodel import Session, select  # query and insert data in db
 
 from models import Book
+from database import BookModel, engine
 
 app = FastAPI()
 
 data = []
 
+
 @app.on_event('startup')
 async def startup_event():
-  datapath = pathlib.Path() / 'data' / 'books.json'
-  with open(datapath, 'r') as f:
-    books = json.load(f)
-    for book in books:
-      data.append(Book(**book).model_dump())
+    DATAFILE = pathlib.Path() / 'data' / 'books.json'
+    session = Session(engine)
+
+    # check db population
+    statement = select(BookModel)
+    # getting the first row from query
+    result = session.exec(statement).first()
+
+    # load data if no results
+    if result is None:
+        with open(DATAFILE, 'r') as file:
+            books = json.load(file)
+            for book in books:
+                session.add(BookModel(**book))
+        session.commit()
+
+    session.close()
+
+
+def get_session():
+    with Session(engine) as session:
+        yield session
 
 
 # GET ALL BOOKS
 @app.get('/api/v1/books/', response_model=List[Book])
-def get_all_books():
-  return data
+def get_all_books(session: Session = Depends(get_session)):  # passing session dependency
+    # with Session(engine) as session:  # context manager (don't need to manually close the session)
+    statement = select(BookModel)
+    result = session.exec(statement).all()
+    return result
 
 
 # GET BOOK BY ID
-@app.get('/api/v1/books/{book_id}', response_model=Union[Book, str])
-def books(book_id: int, response: Response):
-  # find book by id or return None
-  book = None
-  for b in data:
-    if b['id'] == book_id:
-      book = b
-      break
-
-  if book is None:
-    response.status_code = 404
-    return "Book not found"
-  return book
+@app.get('/api/v1/books/{book_id}/', response_model=Union[Book, str])
+def books(book_id: int, response: Response, session: Session = Depends(get_session)):
+    # find book by id or return None
+    book = session.get(BookModel, book_id)
+    if book is None:
+        response.status_code = 404
+        return "Book not found"
+    return book
 
 
 # CREATE NEW BOOK
 @app.post('/api/v1/books/', response_model=Book, status_code=201)
-def add_book(book: Book):
-  book_dict = book.model_dump()
-  # create id to new data
-  book_dict['id'] = max(data, key=lambda x: x['id']).get('id') + 1
-  data.append(book_dict)
-  return book_dict
-
+def add_book(book: BookModel, session: Session = Depends(get_session)):
+    session.add(book)
+    session.commit()
+    # get the id from the db after the object has been created
+    session.refresh(book)
+    return book
 
 
 # MODIFY BOOK
-@app.put('/api/v1/books/{book_id}', response_model=Union[Book, str])
-def books(book_id: int, updated_book: Book, response: Response):
-  book = None
-  for b in data:
-    if b['id'] == book_id:
-      book = b
-      break
+@app.put('/api/v1/books/{book_id}/', response_model=Union[Book, str])
+def books(book_id: int, updated_book: Book, response: Response, session: Session = Depends(get_session)):
+    book = session.get(BookModel, book_id)
 
-  if book is None:
-    response.status_code = 404
-    return "Book not found"
-  
-  for key, value in updated_book.model_dump().items():
-    if key != 'id':  # to not change the id
-      book[key] = value
-  return book
+    if book is None:
+        response.status_code = 404
+        return "Book not found"
+
+    # exclude_unset -> exclude id so it doesn't change
+    book_dict = updated_book.dict(exclude_unset=True)
+    for key, value in book_dict.items():
+        setattr(book, key, value)
+
+    session.add(book)
+    session.commit()
+    session.refresh(book)
+    return book
+
+
+# DELETE BOOK
+@app.delete('/api/v1/books/{book_id}/')
+def del_book(book_id: int, response: Response, session: Session = Depends(get_session)):
+    book = session.get(BookModel, book_id)
+
+    if book is None:
+        response.status_code = 404
+        return "Book not found"
+
+    session.delete(book)
+    session.commit()
+
+    return Response(status_code=200)
