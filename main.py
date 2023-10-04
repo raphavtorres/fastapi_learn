@@ -4,6 +4,7 @@ from typing import List, Union
 
 from fastapi import FastAPI, Response, Depends, HTTPException, Query
 from sqlmodel import Session, select  # query and insert data in db
+import requests
 
 from models import Book
 from database import BookModel, engine
@@ -16,14 +17,13 @@ data = []
 @app.on_event('startup')
 async def startup_event():
     DATAFILE = pathlib.Path() / 'data' / 'books.json'
-    session = Session(engine)
+    session = Session(engine)  # responsable for sanding data to database
 
     # check db population
     statement = select(BookModel)
-    # getting the first row from query
-    result = session.exec(statement).first()
+    result = session.exec(statement).first()  # getting the first row from query
 
-    # load data if no results
+    # if no results populate db with data in json
     if result is None:
         with open(DATAFILE, 'r') as file:
             books = json.load(file)
@@ -102,3 +102,23 @@ def del_book(book_id: int, response: Response, session: Session = Depends(get_se
     session.commit()
 
     return Response(status_code=200)
+
+
+# GET BOOK FROM OTHER API
+@app.get('/api/v1/apigoogle/{genre}/', response_model=list)
+def get_api_google(genre: str):
+    """
+    making a request to the Google API
+    EX: api/v1/apigoogle/recipe/
+    """
+    response = requests.get(f"https://www.googleapis.com/books/v1/volumes?q={genre}&filter=free-ebooks&key=AIzaSyBpFzGiGUPBBVDmiFLdEfNqIPWEpPhrOCA")
+    response.raise_for_status()
+    items = []
+    titles = []
+    for i in response.json()['items']:
+        items.append(i['volumeInfo'])
+    print(items)
+
+    for i in items:
+        titles.append(i['title'])
+    return titles
